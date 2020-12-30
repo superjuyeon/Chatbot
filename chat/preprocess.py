@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from konlpy.tag import okt
+from konlpy.tag import Okt
 
 FILTERS = "([~.,!?\"':;)(])"
 PAD = "<PAD>"
@@ -21,7 +21,7 @@ UNK_INDEX = 3
 
 MARKER = [PAD, STD, END, UNK]
 CHANGE_FILTER = re.compile(FILTERS)
-MAX_SEQUENCE = 255
+MAX_SEQUENCE = 25
 
 # 데이터 불러오기
 def load_data(path):
@@ -50,18 +50,23 @@ def prepro_like_morphlized(data):
     return result_data
 
 #단어 사전 만들기
-def load_vocabulary(path, vocab_path):
+def load_vocabulary(path, vocab_path, tokenize_as_morph=False):
     vocabulary_list = []
     if not os.path.exists(vocab_path):
-        data_df = pd.read_csv(path, encoding='utf-8')
-        question, answer = list(data_df['Q']), list(data_df['A'])
-        data=[]
-        data.extend(question)
-        data.extend(answer)
+        if(os.path.exist(path)):
+            data_df = pd.read_csv(path, encoding='utf-8')
+            question, answer = list(data_df['Q']), list(data_df['A'])
+            if tokenize_as_morph:
+                question = prepro_like_morphlized(question)
+                answer = prepro_like_morphlized(answer)
 
-        words = data_tokenizer(data)
-        words = list(set(words))
-        words[:0] = MARKER
+            data=[]
+            data.extend(question)
+            data.extend(answer)
+
+            words = data_tokenizer(data)
+            words = list(set(words))
+            words[:0] = MARKER
 
         with open(vocab_path, 'w', encoding='utf-8') as vocabulary_file:
             for word in words:
@@ -71,55 +76,61 @@ def load_vocabulary(path, vocab_path):
         for line in vocabulary_file:
             vocabulary_list.append(line.strip())
 
-    word2idx, idx2word = make_vocabulary(vocabulary_list)
+    char2idx, idx2char = make_vocabulary(vocabulary_list)
 
-    return word2idx, idx2word, len(word2idx)
+    return char2idx, idx2char, len(char2idx)
 
 
 # 각각 단어에 대한 인덱스와 인덱스에 대한 단어를 가진 딕셔너리 데이터를 뽑아주는 함수
 def make_vocabulary(vocabulary_list):
     # 리스트를 키가 단어이고 값이 인덱스인 딕셔너리
-    word2idx = {word: idx for idx, word in enumerate(vocabulary_list)}
+    char2idx = {char: idx for idx, char in enumerate(vocabulary_list)}
     # 리스트를 키가 인덱스고 값이 단어인 딕셔너리
-    idx2word = {idx: word for idx, word in enumerate(vocabulary_list)}
+    idx2char = {idx: char for idx, char in enumerate(vocabulary_list)}
 
-    return word2idx, idx2word
+    return char2idx, idx2char
 
 
-word2idx, idx2word, vocab_size = load_vocabulary(PATH, VOCAB_PATH)
+# char2idx, idx2char, vocab_size = load_vocabulary(PATH, VOCAB_PATH)
 
 # 인코더에 적용될 입력값을 만드는 전처리 함수
-def enc_preprocessing(value, dictionary):
+def enc_processing(value, dictionary, tokenize_as_morph=False):
     sequences_input_index=[]
     sequences_length = []
+
+    if tokenize_as_morph:
+        value = prepro_like_morphlized(value)
 
     for sequence in value:
         sequence = re.sub(CHANGE_FILTER,'',sequence)
         sequence_index = []
 
-    for word in sequence.split():
-        if dictionary.get(word) is not None:
-            sequence_index.extend([dictionary[word]])
-        else: 
-            sequence_index.extend([dictionary[UNK]])
+        for word in sequence.split():
+            if dictionary.get(word) is not None:
+                sequence_index.extend([dictionary[word]])
+            else: 
+                sequence_index.extend([dictionary[UNK]])
 
-    if len(sequence_index) > MAX_SEQUENCE:
-        sequence_index = sequence_index[:MAX_SEQUENCE]
+        if len(sequence_index) > MAX_SEQUENCE:
+            sequence_index = sequence_index[:MAX_SEQUENCE]
 
-    sequences_length.append(len(sequence_index))
-    sequence_index += (MAX_SEQUENCE - len(sequence_index)) * dictionary[PAD]
+        sequences_length.append(len(sequence_index))
+        sequence_index += (MAX_SEQUENCE - len(sequence_index)) * dictionary[PAD]
 
-    sequences_input_index.append(sequence_index)
+        sequences_input_index.append(sequence_index)
 
-return np.asarray(sequence_input_index), sequences_length
+    return np.asarray(sequences_input_index), sequences_length
 
 # 디코더의 입력값을 만드는 함수
-def dec_output_preprocessing(value, dictionary):
+def dec_output_processing(value, dictionary, tokenize_as_morph=False):
     sequences_output_index = []
     sequences_length = []
 
+    if tokenize_as_morph:
+        value = prepro_like_morphlized(value)
+
     for sequence in value:
-        sequences = re.sub(CHANGE_FILTER,'',sequence)
+        sequence = re.sub(CHANGE_FILTER,'',sequence)
         sequence_index = []
         sequence_index = [dictionary[STD]] + [dictionary[word] for word in sequence.split()]
 
@@ -133,8 +144,12 @@ def dec_output_preprocessing(value, dictionary):
     return np.asarray(sequences_output_index), sequences_length
 
 # 디코더의 타깃값을 만드는 함수 
-def dec_target_processing(value, dictionary):
+def dec_target_processing(value, dictionary, tokenize_as_morph=False):
     sequences_target_index = []
+    
+    if tokenize_as_morph:
+        value = prepro_like_morphlized(value)
+
     for sequence in value:
         sequence = re.sub(CHANGE_FILTER,'',sequence)
         sequence_index = [dictionary[word] for word in sequence.split()]
